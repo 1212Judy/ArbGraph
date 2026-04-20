@@ -34,3 +34,22 @@ Instead of resolving conflicts during generation, ArbGraph performs **pre-genera
 
 ```bash
 python run_arbgraph.py
+```
+
+---
+
+## Requirements
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## Notes
+
+- Default backbone: Qwen3-4B-Instruct  
+- Retrieval based on Wikipedia  
+- This is a research prototype and may require GPU for efficient execution  
