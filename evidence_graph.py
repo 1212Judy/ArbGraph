@@ -22,6 +22,7 @@ class EvidenceGraphBuilder:
         query: str,
         query_relevance_threshold: float = 0.3,
         pair_similarity_threshold: float = 0.75,
+        relation_confidence_threshold: float = 0.5,
         max_support_edges: int = 60,
     ) -> nx.DiGraph:
         claims = self._filter_by_query(claims, query, query_relevance_threshold)
@@ -56,26 +57,44 @@ class EvidenceGraphBuilder:
         contradiction_edges = []
 
         for ci, cj, sim_score in candidate_pairs:
-            relation = self._verify_relation(
+            relation, relation_confidence = self._verify_relation(
                 graph.nodes[ci]["text"],
                 graph.nodes[cj]["text"],
             )
 
-            if relation == "support":
-                support_edges.append((ci, cj, sim_score))
-            elif relation == "contradiction":
-                contradiction_edges.append((ci, cj, sim_score))
+            if relation_confidence < relation_confidence_threshold:
+                continue
 
+            edge = (ci, cj, sim_score, relation_confidence)
+            if relation == "support":
+                support_edges.append(edge)
+            elif relation == "contradiction":
+                contradiction_edges.append(edge)
+
+        # Paper implementation details use a global top-M support-edge cap.
         support_edges.sort(key=lambda x: x[2], reverse=True)
         support_edges = support_edges[:max_support_edges]
 
-        for ci, cj, score in support_edges:
-            graph.add_edge(ci, cj, type="support", score=score)
-            graph.add_edge(cj, ci, type="support", score=score)
+        for ci, cj, similarity, relation_confidence in support_edges:
+            attributes = {
+                "type": "support",
+                "score": similarity,
+                "similarity": similarity,
+                "relation_confidence": relation_confidence,
+            }
+            graph.add_edge(ci, cj, **attributes)
+            graph.add_edge(cj, ci, **attributes)
 
-        for ci, cj, score in contradiction_edges:
-            graph.add_edge(ci, cj, type="contradiction", score=score)
-            graph.add_edge(cj, ci, type="contradiction", score=score)
+        # Preserve all verifier-approved contradiction edges.
+        for ci, cj, similarity, relation_confidence in contradiction_edges:
+            attributes = {
+                "type": "contradiction",
+                "score": similarity,
+                "similarity": similarity,
+                "relation_confidence": relation_confidence,
+            }
+            graph.add_edge(ci, cj, **attributes)
+            graph.add_edge(cj, ci, **attributes)
 
         return graph
 
@@ -135,7 +154,7 @@ class EvidenceGraphBuilder:
 
         return pairs
 
-    def _verify_relation(self, text_a: str, text_b: str) -> str:
+    def _verify_relation(self, text_a: str, text_b: str) -> Tuple[str, float]:
         prompt = f"""
 Determine the logical relationship between the following two claims.
 
@@ -147,29 +166,28 @@ Choose exactly one label:
 - contradiction
 - neutral
 
+Confidence must be a number between 0 and 1.
+
 Return ONLY valid JSON in the following format:
-{{"label": "support"}}
+{{"label": "support", "confidence": 0.0}}
 """.strip()
 
         raw = self.llm.generate(prompt) if hasattr(self.llm, "generate") else self.llm(prompt)
         parsed = self._parse_json(raw)
 
-        if parsed is not None:
-            label = str(parsed.get("label", "")).strip().lower()
-            if label in {"support", "contradiction", "neutral"}:
-                return label
+        if parsed is None:
+            return "neutral", 0.0
 
-        text = raw.content if hasattr(raw, "content") else str(raw)
-        text = text.strip().lower()
+        label = str(parsed.get("label", "neutral")).strip().lower()
+        if label not in {"support", "contradiction", "neutral"}:
+            return "neutral", 0.0
 
-        if text.startswith("support"):
-            return "support"
-        if text.startswith("contradiction"):
-            return "contradiction"
-        if text.startswith("neutral"):
-            return "neutral"
+        try:
+            confidence = float(parsed.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            confidence = 0.0
 
-        return "neutral"
+        return label, min(max(confidence, 0.0), 1.0)
 
     def _parse_json(self, text):
         try:

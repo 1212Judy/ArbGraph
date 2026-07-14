@@ -15,7 +15,7 @@ class ArbitrationRound:
 
 
 class ArbGraphArbitrator:
-    # iterative credibility arbitration (Algorithm 1)
+
 
     def __init__(
         self,
@@ -24,12 +24,14 @@ class ArbGraphArbitrator:
         accept_threshold: float = 0.3,
         arbitration_budget: int = 3,
         step_size: float = 0.8,
+        gate_threshold: float = 0.5,
     ):
         self.llm = llm
         self.max_rounds = max_rounds
         self.accept_threshold = accept_threshold
         self.arbitration_budget = arbitration_budget
         self.eta = step_size
+        self.gate_threshold = gate_threshold
 
         self.logits: Dict[str, float] = {}
         self.defeat_counts: Dict[str, int] = {}
@@ -87,7 +89,7 @@ class ArbGraphArbitrator:
             seen.add(pair)
 
             pu, pv = self._prob(u), self._prob(v)
-            if pu < self.accept_threshold or pv < self.accept_threshold:
+            if pu <= self.accept_threshold or pv <= self.accept_threshold:
                 continue
 
             intensity = (pu + pv) / (1.0 + abs(pu - pv))
@@ -101,59 +103,73 @@ class ArbGraphArbitrator:
     def _resolve_pair(self, graph, ci, cj, query):
         node_i, node_j = graph.nodes[ci], graph.nodes[cj]
 
-        # support context
+        # support context N_sup(c_i) union N_sup(c_j)
         ctx_i = self._get_support_context(graph, ci)
         ctx_j = self._get_support_context(graph, cj)
 
         prompt = f"""
+Resolve the conflict between two claims using the query and supporting context.
+
 Query: {query}
 
 Claim A: {node_i.get("text")}
-Supporting evidence A:
-{ctx_i}
+Supporting context A:
+{ctx_i or "None"}
 
 Claim B: {node_j.get("text")}
-Supporting evidence B:
-{ctx_j}
+Supporting context B:
+{ctx_j or "None"}
 
-Choose one:
-A_entails_B, B_entails_A, A_contradicts_B, B_contradicts_A, unknown
+Select a winner only when the available context is sufficient for a confident
+decision. Otherwise return "unknown". Confidence must be between 0 and 1.
 
-Return JSON:
-{{"label": "..."}}
-"""
+Return ONLY valid JSON:
+{{"winner": "A", "loser": "B", "confidence": 0.0}}
 
-        raw = self.llm.generate(prompt)
+Allowed winner/loser values:
+- winner "A" and loser "B"
+- winner "B" and loser "A"
+- winner "unknown" and loser "unknown"
+""".strip()
+
+        raw = self.llm.generate(prompt) if hasattr(self.llm, "generate") else self.llm(prompt)
         parsed = self._parse_json(raw) or {}
 
-        label = parsed.get("label")
+        winner_label = str(parsed.get("winner", "unknown")).strip().upper()
+        loser_label = str(parsed.get("loser", "unknown")).strip().upper()
 
-        gate = 1 if label in {
-            "A_entails_B", "A_contradicts_B",
-            "B_entails_A", "B_contradicts_A"
-        } else 0
+        try:
+            confidence = float(parsed.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        confidence = min(max(confidence, 0.0), 1.0)
 
-        if label in {"A_entails_B", "A_contradicts_B"}:
+        valid_decision = (winner_label, loser_label) in {("A", "B"), ("B", "A")}
+        gate = int(valid_decision and confidence >= self.gate_threshold)
+
+        if winner_label == "A" and loser_label == "B":
             winner, loser = ci, cj
-        elif label in {"B_entails_A", "B_contradicts_A"}:
+        elif winner_label == "B" and loser_label == "A":
             winner, loser = cj, ci
         else:
-            winner, loser = (ci, cj) if self._prob(ci) >= self._prob(cj) else (cj, ci)
+            winner, loser = None, None
 
         return {
             "winner": winner,
             "loser": loser,
             "gate": gate,
-            "label": label,
+            "confidence": confidence,
         }
 
     # ============================
 
     def _get_support_context(self, graph, cid):
         texts = []
-        for u, v, d in graph.edges(cid, data=True):
-            if d.get("type") == "support":
-                texts.append(graph.nodes[v].get("text", ""))
+        for _, neighbor, data in graph.out_edges(cid, data=True):
+            if data.get("type") == "support":
+                text = graph.nodes[neighbor].get("text", "")
+                if text:
+                    texts.append(text)
         return "\n".join(texts[:5])
 
     # ============================
@@ -207,10 +223,11 @@ Return JSON:
         return {k: round(self._prob(k), 3) for k in self.logits}
 
     def _parse_json(self, text):
-        m = re.search(r"\{.*\}", str(text), re.S)
-        if not m:
+        text = text.content if hasattr(text, "content") else str(text)
+        match = re.search(r"\{.*\}", text, re.S)
+        if not match:
             return None
         try:
-            return json.loads(m.group(0))
+            return json.loads(match.group(0))
         except Exception:
             return None
