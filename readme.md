@@ -1,11 +1,21 @@
 # ArbGraph: Conflict-Aware Evidence Arbitration for Reliable Long-Form RAG
+<div align="left">
+  <img width="55" height="55" align="middle" alt="RUC AI Box"
+       src="https://github.com/user-attachments/assets/d587c6d5-2921-42a7-b71d-fb5c8d166493" />
+  <span>
+    This work was conducted as part of
+    <a href="https://github.com/RUCAIBox"><strong>RUC AI Box</strong></a>
+    at Renmin University of China.
+  </span>
+</div>
+
+The project repository under RUC AI Box is available at [RUCAIBox/ArbGraph](https://github.com/RUCAIBox/ArbGraph).
 
 This repository provides an implementation of **ArbGraph**, a framework for improving the reliability of long-form retrieval-augmented generation (RAG) via pre-generation evidence arbitration.
 
 The code accompanies our paper and is released for research use and partial reproducibility.
 
 ---
-
 ## Overview
 
 ArbGraph addresses a key limitation of long-form RAG systems: handling noisy and contradictory evidence.
