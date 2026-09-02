@@ -55,7 +55,14 @@ Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
+## Experimental Configuration
+---
+The experiments reported in the paper use the following key settings:
 
+- Query relevance threshold: $\tau_q = 0.3$
+- Candidate-pair similarity threshold: $\tau_{\mathrm{sim}} = 0.65$
+- Maximum number of arbitration rounds: $T = 3$
+- Maximum number of support edges: $M = 60$
 ---
 
 ## Notes
