@@ -55,8 +55,9 @@ Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
-## Experimental Configuration
 ---
+## Experimental Configuration
+
 The experiments reported in the paper use the following key settings:
 
 - Query relevance threshold: $\tau_q = 0.3$
